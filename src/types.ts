@@ -15,7 +15,7 @@ export interface ClockWeatherCardConfig extends LovelaceCardConfig {
   sun_entity?: string
   temperature_sensor?: string
   humidity_sensor?: string
-  weather_icon_type?: 'fill' | 'line'
+  weather_icon_type?: 'fill' | 'line' | 'monochrome'
   animated_icon?: boolean
   forecast_rows?: number
   locale?: string
@@ -41,7 +41,7 @@ export interface MergedClockWeatherCardConfig extends LovelaceCardConfig {
   sun_entity: string
   temperature_sensor?: string
   humidity_sensor?: string
-  weather_icon_type: 'fill' | 'line'
+  weather_icon_type: 'fill' | 'line' | 'monochrome'
   animated_icon: boolean
   forecast_rows: number
   locale?: string

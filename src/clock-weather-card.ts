@@ -456,10 +456,17 @@ export class ClockWeatherCard extends LitElement {
     }
   }
 
-  private toIcon (weatherState: string, type: 'fill' | 'line', forceDay: boolean, kind: 'static' | 'animated'): string {
+  private toIcon (weatherState: string, type: 'fill' | 'line' | 'monochrome', forceDay: boolean, kind: 'static' | 'animated'): string {
     const daytime = forceDay ? 'day' : this.getSun()?.state === 'below_horizon' ? 'night' : 'day'
-    const iconMap = kind === 'animated' ? animatedIcons : staticIcons
-    const icon = iconMap[type][weatherState]
+
+    if (kind === 'static' || type === 'monochrome') {
+      const icon = staticIcons[type][weatherState]
+      return icon?.[daytime] || icon
+    }
+
+    const animatedIcon = animatedIcons[type][weatherState]
+    const staticIcon = staticIcons[type][weatherState]
+    const icon = animatedIcon ?? staticIcon
     return icon?.[daytime] || icon
   }
 

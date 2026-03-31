@@ -83,6 +83,27 @@ import staticFillRaindrops from './icons/fill/svg-static/raindrops.svg'
 import staticLineRaindrops from './icons/line/svg-static/raindrops.svg'
 import staticFillRaindrop from './icons/fill/svg-static/raindrop.svg'
 import staticLineRaindrop from './icons/line/svg-static/raindrop.svg'
+import staticMonochromePartlyCloudyNightRain from './icons/monochrome/svg-static/partly-cloudy-night-rain.svg'
+import staticMonochromePartlyCloudyDayRain from './icons/monochrome/svg-static/partly-cloudy-day-rain.svg'
+import staticMonochromePartlyCloudyNight from './icons/monochrome/svg-static/partly-cloudy-night.svg'
+import staticMonochromePartlyCloudyDay from './icons/monochrome/svg-static/partly-cloudy-day.svg'
+import staticMonochromeCloudy from './icons/monochrome/svg-static/cloudy.svg'
+import staticMonochromeClearNight from './icons/monochrome/svg-static/clear-night.svg'
+import staticMonochromeFogNight from './icons/monochrome/svg-static/fog-night.svg'
+import staticMonochromeFogDay from './icons/monochrome/svg-static/fog-day.svg'
+import staticMonochromeHail from './icons/monochrome/svg-static/hail.svg'
+import staticMonochromeThunderstormsNight from './icons/monochrome/svg-static/thunderstorms-night.svg'
+import staticMonochromeThunderstormsDay from './icons/monochrome/svg-static/thunderstorms-day.svg'
+import staticMonochromeThunderstormsRainNight from './icons/monochrome/svg-static/thunderstorms-night-rain.svg'
+import staticMonochromeThunderstormsRainDay from './icons/monochrome/svg-static/thunderstorms-day-rain.svg'
+import staticMonochromeRain from './icons/monochrome/svg-static/rain.svg'
+import staticMonochromeSnow from './icons/monochrome/svg-static/snow.svg'
+import staticMonochromeSleet from './icons/monochrome/svg-static/sleet.svg'
+import staticMonochromeClearDay from './icons/monochrome/svg-static/clear-day.svg'
+import staticMonochromeWindsock from './icons/monochrome/svg-static/windsock.svg'
+import staticMonochromeHurricane from './icons/monochrome/svg-static/hurricane.svg'
+import staticMonochromeRaindrops from './icons/monochrome/svg-static/raindrops.svg'
+import staticMonochromeRaindrop from './icons/monochrome/svg-static/raindrop.svg'
 
 export const animatedIcons = {
   line: {
@@ -247,5 +268,45 @@ export const staticIcons = {
     windy: staticFillWindsock,
     'windy-exceptional': staticFillWindsock,
     exceptional: staticFillHurricane
+  },
+  monochrome: {
+    rainy: {
+      day: staticMonochromePartlyCloudyDayRain,
+      night: staticMonochromePartlyCloudyNightRain
+    },
+    partlycloudy: {
+      day: staticMonochromePartlyCloudyDay,
+      night: staticMonochromePartlyCloudyNight
+    },
+    cloudy: staticMonochromeCloudy,
+    'clear-night': {
+      day: staticMonochromeClearDay,
+      night: staticMonochromeClearNight
+    },
+    fog: {
+      day: staticMonochromeFogDay,
+      night: staticMonochromeFogNight
+    },
+    hail: staticMonochromeHail,
+    lightning: {
+      day: staticMonochromeThunderstormsDay,
+      night: staticMonochromeThunderstormsNight
+    },
+    'lightning-rainy': {
+      day: staticMonochromeThunderstormsRainDay,
+      night: staticMonochromeThunderstormsRainNight
+    },
+    pouring: staticMonochromeRain,
+    raindrop: staticMonochromeRaindrop,
+    raindrops: staticMonochromeRaindrops,
+    snowy: staticMonochromeSnow,
+    'snowy-rainy': staticMonochromeSleet,
+    sunny: {
+      day: staticMonochromeClearDay,
+      night: staticMonochromeClearNight
+    },
+    windy: staticMonochromeWindsock,
+    'windy-exceptional': staticMonochromeWindsock,
+    exceptional: staticMonochromeHurricane
   }
 }
