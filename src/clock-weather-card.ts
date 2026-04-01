@@ -28,7 +28,7 @@ import styles from './styles'
 import { actionHandler } from './action-handler-directive'
 import { localize } from './localize/localize'
 import { type HassEntity, type HassEntityBase } from 'home-assistant-js-websocket'
-import { extractMostOccuring, max, min, roundIfNotNull, roundUp } from './utils'
+import { extractMostOccuring, max, min, roundIfNotNull, roundUp, windBearingToDirection } from './utils'
 import { animatedIcons, staticIcons } from './images'
 import { version } from '../package.json'
 import { safeRender } from './helpers'
@@ -216,6 +216,7 @@ export class ClockWeatherCard extends LitElement {
     const aqiBackgroundColor = this.getAqiBackgroundColor(aqi)
     const aqiTextColor = this.getAqiTextColor(aqi)
     const humidity = roundIfNotNull(this.getCurrentHumidity())
+    const windInfo = this.getWindInfo()
     const iconType = this.config.weather_icon_type
     const icon = this.toIcon(state, iconType, false, this.getIconAnimationKind())
     const weatherString = this.localize(`weather.${state}`)
@@ -238,6 +239,7 @@ export class ClockWeatherCard extends LitElement {
           ${this.config.show_humidity && localizedHumidity ? html`<br>${localizedHumidity}` : ''}
           ${this.config.apparent_sensor && apparentTemp ? html`<br>${apparentString}: ${localizedApparent}` : ''}
           ${this.config.aqi_sensor && aqi !== null ? html`<br><aqi style="background-color: ${aqiBackgroundColor}; color: ${aqiTextColor};">${aqi} ${aqiString}</aqi>` : ''}
+          ${this.config.wind_speed && windInfo ? html`<br>${windInfo}` : ''}
         </clock-weather-card-today-right-wrap-top>
         <clock-weather-card-today-right-wrap-bottom>
           ${this.config.hide_clock ? '' : this.time()}
@@ -445,6 +447,7 @@ export class ClockWeatherCard extends LitElement {
       time_format: config.time_format?.toString() as '12' | '24' | undefined,
       time_pattern: config.time_pattern ?? undefined,
       show_humidity: config.show_humidity ?? false,
+      wind_speed: config.wind_speed ?? false,
       hide_forecast_section: config.hide_forecast_section ?? false,
       hide_today_section: config.hide_today_section ?? false,
       hide_clock: config.hide_clock ?? false,
@@ -528,6 +531,41 @@ export class ClockWeatherCard extends LitElement {
       }
     }
     return null
+  }
+
+  private getWindInfo (): string | null {
+    const weather = this.getWeather()
+    const windSpeed = weather.attributes.wind_speed
+    const windGust = weather.attributes.wind_gust_speed
+    const windUnit = weather.attributes.wind_speed_unit ?? ''
+    const windBearing = weather.attributes.wind_bearing
+
+    if (windSpeed === undefined || windSpeed === null) {
+      return null
+    }
+
+    // Format wind speed / gust
+    let windDisplay = ''
+    if (windSpeed !== undefined && windSpeed !== null) {
+      windDisplay = this.config.show_decimal ? windSpeed.toString() : Math.round(windSpeed).toString()
+    }
+
+    if (windGust !== undefined && windGust !== null) {
+      const gustValue = this.config.show_decimal ? windGust.toString() : Math.round(windGust).toString()
+      windDisplay = `${windDisplay} / ${gustValue}`
+    }
+
+    // Add unit and bearing
+    if (windDisplay) {
+      windDisplay += ` ${windUnit}`
+      const direction = windBearingToDirection(windBearing)
+      if (direction) {
+        windDisplay += ` ${direction}`
+      }
+      windDisplay = `Wind ${windDisplay}`
+    }
+
+    return windDisplay || null
   }
 
   private getAqiBackgroundColor (aqi: number | null): string | null {

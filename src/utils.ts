@@ -54,3 +54,18 @@ export function extractMostOccuring<T extends string | number | symbol> (element
   }
   return maxEl
 }
+
+export function windBearingToDirection (bearing: number | null | undefined): string | null {
+  if (bearing === null || bearing === undefined) {
+    return null
+  }
+
+  // Normalize bearing to 0-360 range
+  const normalizedBearing = ((bearing % 360) + 360) % 360
+
+  // Map bearing to cardinal/intercardinal directions
+  // Each direction covers a 22.5 degree range (360 / 16)
+  const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+  const index = Math.round(normalizedBearing / 22.5) % 16
+  return directions[index]
+}
