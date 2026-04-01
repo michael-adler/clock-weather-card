@@ -9,13 +9,15 @@ export default css`
 
   clock-weather-card-today {
     display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   clock-weather-card-today-left {
     display: flex;
-    width: 35%;
+    width: 25%;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
   }
 
   .grow-img {
@@ -25,38 +27,39 @@ export default css`
 
   clock-weather-card-today-right {
     display: flex;
-    width: 65%;
-    justify-content: space-around;
-    align-items: center;
-  }
-
-  clock-weather-card-today-right-wrap {
-    display: flex;
+    flex: 1;
+    justify-content: center;
+    align-items: flex-end;
     flex-direction: column;
   }
 
-  clock-weather-card-today-right-wrap-top {
-    width: 100%;
-    text-align: end;
-    display: block;
+  clock-weather-card-today-temp {
+    display: flex;
+    align-items: center;
+    font-size: 6.5rem;
+    line-height: 1;
+    white-space: nowrap;
   }
 
-  clock-weather-card-today-right-wrap-center {
-    display: flex;
-    height: 4rem;
-    font-size: 3.5rem;
-    white-space: nowrap;
-    align-items: center;
-    justify-content: center;
+  clock-weather-card-today-right-wrap-top {
+    text-align: right;
+    display: block;
+    font-size: 1.35rem;
+    line-height: 1.25;
   }
 
   clock-weather-card-today-right-wrap-bottom {
-    display: flex;
-    justify-content: start;
+    text-align: right;
+    font-size: 1.2rem;
+    line-height: 1.2;
   }
 
   clock-weather-card-forecast {
     display: block;
+  }
+
+  clock-weather-card-today + clock-weather-card-forecast {
+    margin-top: 1.5rem;
   }
 
   clock-weather-card-forecast-row {

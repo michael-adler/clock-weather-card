@@ -229,21 +229,20 @@ export class ClockWeatherCard extends LitElement {
       <clock-weather-card-today-left>
         <img class="grow-img" src=${icon} />
       </clock-weather-card-today-left>
+      <clock-weather-card-today-temp>
+        ${localizedTemp ?? 'n/a'}
+      </clock-weather-card-today-temp>
       <clock-weather-card-today-right>
-        <clock-weather-card-today-right-wrap>
-          <clock-weather-card-today-right-wrap-top>
-            ${this.config.hide_clock ? weatherString : localizedTemp ? `${weatherString}, ${localizedTemp}` : weatherString}
-            ${this.config.show_humidity && localizedHumidity ? html`<br>${localizedHumidity}` : ''}
-            ${this.config.apparent_sensor && apparentTemp ? html`<br>${apparentString}: ${localizedApparent}` : ''}
-            ${this.config.aqi_sensor && aqi !== null ? html`<br><aqi style="background-color: ${aqiBackgroundColor}; color: ${aqiTextColor};">${aqi} ${aqiString}</aqi>` : ''}
-          </clock-weather-card-today-right-wrap-top>
-          <clock-weather-card-today-right-wrap-center>
-            ${this.config.hide_clock ? localizedTemp ?? 'n/a' : this.time()}
-          </clock-weather-card-today-right-wrap-center>
-          <clock-weather-card-today-right-wrap-bottom>
-            ${this.config.hide_date ? '' : this.date()}
-          </clock-weather-card-today-right-wrap-bottom>
-        </clock-weather-card-today-right-wrap>
+        <clock-weather-card-today-right-wrap-top>
+          ${weatherString}
+          ${this.config.show_humidity && localizedHumidity ? html`<br>${localizedHumidity}` : ''}
+          ${this.config.apparent_sensor && apparentTemp ? html`<br>${apparentString}: ${localizedApparent}` : ''}
+          ${this.config.aqi_sensor && aqi !== null ? html`<br><aqi style="background-color: ${aqiBackgroundColor}; color: ${aqiTextColor};">${aqi} ${aqiString}</aqi>` : ''}
+        </clock-weather-card-today-right-wrap-top>
+        <clock-weather-card-today-right-wrap-bottom>
+          ${this.config.hide_clock ? '' : this.time()}
+          ${this.config.hide_date ? '' : html`<br>${this.date()}`}
+        </clock-weather-card-today-right-wrap-bottom>
       </clock-weather-card-today-right>`
   }
 
