@@ -311,15 +311,17 @@ export class ClockWeatherCard extends LitElement {
   private renderForecastTemperatureBar (minTemp: number, maxTemp: number, minTempDay: number, maxTempDay: number, isNow: boolean, currentTemp: number | null, temperatureUnit: TemperatureUnit): TemplateResult {
     const { startPercent, endPercent } = this.calculateBarRangePercents(minTemp, maxTemp, minTempDay, maxTempDay)
     const moveRight = maxTemp === minTemp ? 0 : (minTempDay - minTemp) / (maxTemp - minTemp)
+    const isMonochrome = this.config.weather_icon_type === 'monochrome'
+    const rangeStyle = `--move-right: ${moveRight.toFixed(2)}; --start-percent: ${startPercent.toFixed(2)}%; --end-percent: ${endPercent.toFixed(2)}%; --gradient: ${this.createGradientString(
+      minTempDay,
+      maxTempDay,
+      temperatureUnit
+    )}; ${isMonochrome ? 'background: var(--card-background-color, var(--ha-card-background, var(--paper-card-background-color, #fff))); border: 2px solid var(--primary-text-color); box-sizing: border-box;' : ''}`
     return html`
       <forecast-temperature-bar>
-        <forecast-temperature-bar-background> </forecast-temperature-bar-background>
+        ${!isMonochrome ? html`<forecast-temperature-bar-background> </forecast-temperature-bar-background>` : ''}
         <forecast-temperature-bar-range
-          style="--move-right: ${moveRight.toFixed(2)}; --start-percent: ${startPercent.toFixed(2)}%; --end-percent: ${endPercent.toFixed(2)}%; --gradient: ${this.createGradientString(
-            minTempDay,
-            maxTempDay,
-            temperatureUnit
-          )};"
+          style=${rangeStyle}
         >
           ${isNow ? this.renderForecastCurrentTemp(minTempDay, maxTempDay, currentTemp) : ''}
         </forecast-temperature-bar-range>
