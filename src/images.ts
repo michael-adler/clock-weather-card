@@ -40,6 +40,15 @@ import animatedLineRaindrops from './icons/line/svg/raindrops.svg'
 import animatedFillRaindrops from './icons/fill/svg/raindrops.svg'
 import animatedLineRaindrop from './icons/line/svg/raindrop.svg'
 import animatedFillRaindrop from './icons/fill/svg/raindrop.svg'
+import staticFillThermometer from './icons/fill/svg-static/thermometer.svg'
+import staticFillThermometerWarmer from './icons/fill/svg-static/thermometer-warmer.svg'
+import staticFillThermometerColder from './icons/fill/svg-static/thermometer-colder.svg'
+import staticLineThermometer from './icons/line/svg-static/thermometer.svg'
+import staticLineThermometerWarmer from './icons/line/svg-static/thermometer-warmer.svg'
+import staticLineThermometerColder from './icons/line/svg-static/thermometer-colder.svg'
+import staticMonochromeThermometer from './icons/monochrome/svg-static/thermometer.svg'
+import staticMonochromeThermometerWarmer from './icons/monochrome/svg-static/thermometer-warmer.svg'
+import staticMonochromeThermometerColder from './icons/monochrome/svg-static/thermometer-colder.svg'
 
 import staticFillPartlyCloudyNightRain from './icons/fill/svg-static/partly-cloudy-night-rain.svg'
 import staticLinePartlyCloudyNightRain from './icons/line/svg-static/partly-cloudy-night-rain.svg'
@@ -310,3 +319,21 @@ export const staticIcons = {
     exceptional: staticMonochromeHurricane
   }
 }
+
+export const temperatureTrendIcons = {
+  fill: {
+    stable: staticFillThermometer,
+    rising: staticFillThermometerWarmer,
+    falling: staticFillThermometerColder
+  },
+  line: {
+    stable: staticLineThermometer,
+    rising: staticLineThermometerWarmer,
+    falling: staticLineThermometerColder
+  },
+  monochrome: {
+    stable: staticMonochromeThermometer,
+    rising: staticMonochromeThermometerWarmer,
+    falling: staticMonochromeThermometerColder
+  }
+} as const

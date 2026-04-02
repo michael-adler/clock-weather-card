@@ -36,9 +36,17 @@ export default css`
   clock-weather-card-today-temp {
     display: flex;
     align-items: center;
+    gap: 0.5rem;
     font-size: 6.5rem;
     line-height: 1;
     white-space: nowrap;
+  }
+
+  .temperature-trend-icon {
+    width: 1em;
+    height: 1em;
+    flex: 0 0 auto;
+    align-self: center;
   }
 
   clock-weather-card-today-right-wrap-top {

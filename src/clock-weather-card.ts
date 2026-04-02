@@ -29,10 +29,12 @@ import { actionHandler } from './action-handler-directive'
 import { localize } from './localize/localize'
 import { type HassEntity, type HassEntityBase } from 'home-assistant-js-websocket'
 import { extractMostOccuring, max, min, roundIfNotNull, roundUp, windBearingToDirection } from './utils'
-import { animatedIcons, staticIcons } from './images'
+import { animatedIcons, staticIcons, temperatureTrendIcons } from './images'
 import { version } from '../package.json'
 import { safeRender } from './helpers'
 import { DateTime } from 'luxon'
+
+type TemperatureTrend = 'stable' | 'rising' | 'falling'
 
 console.info(
   `%c  CLOCK-WEATHER-CARD \n%c Version: ${version}`,
@@ -66,9 +68,13 @@ export class ClockWeatherCard extends LitElement {
   @state() private config!: MergedClockWeatherCardConfig
   @state() private currentDate!: DateTime
   @state() private forecasts?: WeatherForecast[]
+  @state() private hourlyForecasts?: WeatherForecast[]
   @state() private error?: TemplateResult
+  @state() private temperatureTrend: TemperatureTrend = 'stable'
   private forecastSubscriber?: () => Promise<void>
   private forecastSubscriberLock = false
+  private hourlyForecastSubscriber?: () => Promise<void>
+  private hourlyForecastSubscriberLock = false
 
   constructor () {
     super()
@@ -122,7 +128,7 @@ export class ClockWeatherCard extends LitElement {
       return false
     }
 
-    if (changedProps.has('forecasts')) {
+    if (changedProps.has('forecasts') || changedProps.has('hourlyForecasts') || changedProps.has('temperatureTrend')) {
       return true
     }
 
@@ -142,6 +148,7 @@ export class ClockWeatherCard extends LitElement {
     super.updated(changedProps)
     if (changedProps.has('config')) {
       void this.subscribeForecastEvents()
+      void this.subscribeHourlyForecastEvents()
     }
   }
 
@@ -191,18 +198,28 @@ export class ClockWeatherCard extends LitElement {
     super.connectedCallback()
     if (this.hasUpdated) {
       void this.subscribeForecastEvents()
+      void this.subscribeHourlyForecastEvents()
     }
   }
 
   public disconnectedCallback (): void {
     super.disconnectedCallback()
     void this.unsubscribeForecastEvents()
+    void this.unsubscribeHourlyForecastEvents()
   }
 
   protected willUpdate (changedProps: PropertyValues): void {
     super.willUpdate(changedProps)
     if (!this.forecastSubscriber) {
       void this.subscribeForecastEvents()
+    }
+
+    if (!this.hourlyForecastSubscriber) {
+      void this.subscribeHourlyForecastEvents()
+    }
+
+    if ((changedProps.has('hass') || changedProps.has('hourlyForecasts')) && this.config) {
+      this.updateTemperatureTrend()
     }
   }
 
@@ -232,6 +249,7 @@ export class ClockWeatherCard extends LitElement {
       </clock-weather-card-today-left>
       <clock-weather-card-today-temp>
         ${localizedTemp ?? 'n/a'}
+        ${temp !== null ? this.renderTemperatureTrendIcon() : ''}
       </clock-weather-card-today-temp>
       <clock-weather-card-today-right>
         <clock-weather-card-today-right-wrap-top>
@@ -307,6 +325,19 @@ export class ClockWeatherCard extends LitElement {
       <forecast-icon>
         <img class="grow-img" src=${src} />
       </forecast-icon>
+    `
+  }
+
+  private renderTemperatureTrendIcon (): TemplateResult {
+    const trend = this.temperatureTrend
+    const icon = temperatureTrendIcons[this.config.weather_icon_type][trend]
+
+    return html`
+      <img
+        class="temperature-trend-icon"
+        src=${icon}
+        alt=${`Temperature ${trend}`}
+      />
     `
   }
 
@@ -495,6 +526,70 @@ export class ClockWeatherCard extends LitElement {
 
     // return weather temperature if above code could not extract temperature from temperature_sensor
     return this.getWeather().attributes.temperature ?? null
+  }
+
+  private updateTemperatureTrend (): void {
+    this.temperatureTrend = this.resolveTemperatureTrend()
+  }
+
+  private resolveTemperatureTrend (): TemperatureTrend {
+    const upcomingForecasts = this.getUpcomingHourlyForecasts(3)
+    if (upcomingForecasts.length < 2) {
+      return 'stable'
+    }
+
+    const temperatures = upcomingForecasts
+      .map((forecast) => forecast.temperature)
+      .filter((temperature): temperature is number => temperature !== null)
+
+    if (temperatures.length < 2) {
+      return 'stable'
+    }
+
+    const threshold = this.config.show_decimal ? 0.1 : 0.5
+    const firstTemperature = temperatures[0]
+    const lastTemperature = temperatures[temperatures.length - 1]
+    const minTemperature = min(temperatures)
+    const maxTemperature = max(temperatures)
+
+    if ((maxTemperature - minTemperature) <= threshold) {
+      return 'stable'
+    }
+
+    const isRising = temperatures.every((temperature, index) => index === 0 || temperature >= (temperatures[index - 1] - threshold))
+    const isFalling = temperatures.every((temperature, index) => index === 0 || temperature <= (temperatures[index - 1] + threshold))
+
+    if (isRising && (lastTemperature - firstTemperature) > threshold) {
+      return 'rising'
+    }
+
+    if (isFalling && (firstTemperature - lastTemperature) > threshold) {
+      return 'falling'
+    }
+
+    if ((lastTemperature - firstTemperature) > threshold) {
+      return 'rising'
+    }
+
+    if ((firstTemperature - lastTemperature) > threshold) {
+      return 'falling'
+    }
+
+    return 'stable'
+  }
+
+  private getUpcomingHourlyForecasts (count: number): WeatherForecast[] {
+    const now = this.toZonedDate(this.currentDate)
+    return (this.hourlyForecasts ?? [])
+      .filter((forecast) => forecast.temperature !== null)
+      .map((forecast) => ({
+        forecast,
+        datetime: this.parseDateTime(forecast.datetime)
+      }))
+      .filter(({ datetime }) => datetime.toMillis() >= now.toMillis())
+      .sort((left, right) => left.datetime.toMillis() - right.datetime.toMillis())
+      .slice(0, count)
+      .map(({ forecast }) => forecast)
   }
 
   private getCurrentHumidity (): number | null {
@@ -780,6 +875,57 @@ export class ClockWeatherCard extends LitElement {
         // swallow error, as this means that connection was closed already
       } finally {
         this.forecastSubscriber = undefined
+      }
+    }
+  }
+
+  private async subscribeHourlyForecastEvents (): Promise<void> {
+    if (this.hourlyForecastSubscriberLock || this.config == null || this.hass == null) {
+      return
+    }
+
+    this.hourlyForecastSubscriberLock = true
+    await this.unsubscribeHourlyForecastEvents()
+
+    if (this.isLegacyWeather() || !this.supportsFeature(WeatherEntityFeature.FORECAST_HOURLY)) {
+      this.hourlyForecasts = undefined
+      this.hourlyForecastSubscriber = async () => {}
+      this.hourlyForecastSubscriberLock = false
+      return
+    }
+
+    if (!this.isConnected) {
+      this.hourlyForecastSubscriberLock = false
+      return
+    }
+
+    try {
+      const callback = (event: WeatherForecastEvent): void => {
+        this.hourlyForecasts = event.forecast
+      }
+      const options = { resubscribe: false }
+      const message = {
+        type: 'weather/subscribe_forecast',
+        forecast_type: 'hourly' as const,
+        entity_id: this.config.entity
+      }
+      this.hourlyForecastSubscriber = await this.hass.connection.subscribeMessage<WeatherForecastEvent>(callback, message, options)
+    } catch (e: unknown) {
+      console.error('clock-weather-card - Error when subscribing to hourly weather forecast', e)
+      this.hourlyForecasts = undefined
+    } finally {
+      this.hourlyForecastSubscriberLock = false
+    }
+  }
+
+  private async unsubscribeHourlyForecastEvents (): Promise<void> {
+    if (this.hourlyForecastSubscriber) {
+      try {
+        await this.hourlyForecastSubscriber()
+      } catch (e: unknown) {
+        // swallow error, as this means that connection was closed already
+      } finally {
+        this.hourlyForecastSubscriber = undefined
       }
     }
   }
