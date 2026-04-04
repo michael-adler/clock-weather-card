@@ -18,6 +18,7 @@ export interface ClockWeatherCardConfig extends LovelaceCardConfig {
   weather_icon_type?: 'fill' | 'line' | 'monochrome'
   animated_icon?: boolean
   forecast_rows?: number
+  hourly_columns?: number
   locale?: string
   time_format?: '12' | '24'
   time_pattern?: string
@@ -45,6 +46,7 @@ export interface MergedClockWeatherCardConfig extends LovelaceCardConfig {
   weather_icon_type: 'fill' | 'line' | 'monochrome'
   animated_icon: boolean
   forecast_rows: number
+  hourly_columns: number
   locale?: string
   time_format?: '12' | '24'
   time_pattern?: string

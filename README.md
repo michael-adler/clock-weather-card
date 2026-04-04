@@ -114,6 +114,7 @@ wind_speed: false
 hide_clock: false
 hide_date: false
 hourly_forecast: false
+hourly_columns: 12
 use_browser_time: false
 time_zone: null
 show_decimal: false
@@ -134,6 +135,7 @@ aqi_sensor: sensor.air_quality_index
 | weather_icon_type     | `line` \| `fill` \| `monochrome` | **Optional** | Appearance of the large weather icon                                                                                                                                                                                              | `line`    |
 | animated_icon         | boolean          | **Optional** | Whether the large weather icon should be animated                                                                                                                                                                                 | `true`    |
 | forecast_rows         | number           | **Optional** | The amount of weather forecast rows to show. Depending on `hourly_forecast` each row either corresponds to a day or an hour                                                                                                       | `5`       |
+| hourly_columns        | number           | **Optional** | Number of columns shown in the hourly chart when `hourly_forecast` is enabled                                                                                                                                                     | `12`      |
 | locale                | string[^2]       | **Optional** | Language to use for language specific text and date/time formatting. If not provided, falls back to the locale set in HA or, if not set in HA, to `en-GB`                                                                         | `en-GB`   |
 | time_format           | `24` \| `12`     | **Optional** | Format used to display the time. If not provided, falls back to the default time format of the configured `locale`.  This option is ignored if `time_pattern` is set.                                                             | `24`      |
 | time_pattern          | string           | **Optional** | Pattern to use for time formatting. See [luxon](https://moment.github.io/luxon/#/formatting?id=table-of-tokens) for valid tokens. If not provided, falls back to time_format option.                                              | `null`    |
@@ -144,7 +146,7 @@ aqi_sensor: sensor.air_quality_index
 | hide_forecast_section | boolean          | **Optional** | Hides the cards forecast section (lower section),containing the weather forecast                                                                                                                                                  | `false`   |
 | hide_clock            | boolean          | **Optional** | Hides the clock from the today section and prominently displays the current temperature instead                                                                                                                                   | `false`   |
 | hide_date             | boolean          | **Optional** | Hides the date from the today section                                                                                                                                                                                             | `false`   |
-| hourly_forecast       | boolean          | **Optional** | Displays an hourly forecast instead of daily                                                                                                                                                                                      | `false`   |
+| hourly_forecast       | boolean          | **Optional** | Switches the forecast area to the hourly view with a temperature column chart (temperature near the top of each column, hour number at the bottom)                                                                               | `false`   |
 | use_browser_time      | boolean          | **Optional** | Uses the time from your browser to indicate the current time. If not provided, uses the [time_zone](https://www.home-assistant.io/blog/2015/05/09/utc-time-zone-awareness/#setting-up-your-time-zone) configured in HA            | `false`   |
 | time_zone             | string           | **Optional** | Uses the given [time zone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) to indicate the current date and time. If not provided, uses the time zone configured in HA                                              | `null`    |
 | show_decimal          | boolean          | **Optional** | Displays main temperature without rounding                                                                                                                                                                                        | `false`   |

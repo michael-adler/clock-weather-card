@@ -71,6 +71,16 @@ export class ClockWeatherCard extends LitElement {
   @state() private hourlyForecasts?: WeatherForecast[]
   @state() private error?: TemplateResult
   @state() private temperatureTrend: TemperatureTrend = 'stable'
+  @state() private cachedHourlyColumns?: Array<{
+    timeText: string
+    tempText: string
+    tempColor: string
+    barHeightPercent: number
+    color: string
+    isCurrent: boolean
+  }>
+
+  private cachedHourlyColumnsCacheKey?: string
   private forecastSubscriber?: () => Promise<void>
   private forecastSubscriberLock = false
   private hourlyForecastSubscriber?: () => Promise<void>
@@ -109,6 +119,10 @@ export class ClockWeatherCard extends LitElement {
 
     if (config.forecast_rows && config.forecast_rows < 1) {
       throw this.createError('Attribute "forecast_rows" must be greater than 0.')
+    }
+
+    if (config.hourly_columns !== undefined && config.hourly_columns < 1) {
+      throw this.createError('Attribute "hourly_columns" must be greater than 0.')
     }
 
     if (config.time_format && config.time_format.toString() !== '24' && config.time_format.toString() !== '12') {
@@ -218,8 +232,39 @@ export class ClockWeatherCard extends LitElement {
       void this.subscribeHourlyForecastEvents()
     }
 
-    if ((changedProps.has('hass') || changedProps.has('hourlyForecasts')) && this.config) {
-      this.updateTemperatureTrend()
+    if ((changedProps.has('hass') || changedProps.has('hourlyForecasts') || changedProps.has('config')) && this.config) {
+      void this.updateTemperatureTrend()
+    }
+
+    if ((changedProps.has('hass') || changedProps.has('hourlyForecasts') || changedProps.has('currentDate') || changedProps.has('config')) && this.config) {
+      // Fetch hourly columns data when forecasts, current hour, or config changes
+      void this.updateCachedHourlyColumns()
+    }
+  }
+
+  private async updateCachedHourlyColumns (): Promise<void> {
+    if (!this.config || !this.forecasts) {
+      this.cachedHourlyColumns = undefined
+      this.cachedHourlyColumnsCacheKey = undefined
+      return
+    }
+
+    const temperatureUnit = this.getWeather().attributes.temperature_unit
+    const hourKey = this.toZonedDate(this.currentDate).startOf('hour').toISO()
+    const sourceEntity = this.config.temperature_sensor ?? this.config.entity
+    const cacheKey = `${hourKey}-${this.config.hourly_columns}-${temperatureUnit}-${sourceEntity}`
+
+    if (this.cachedHourlyColumnsCacheKey === cacheKey && this.cachedHourlyColumns) {
+      return // Cache is still valid
+    }
+
+    try {
+      this.cachedHourlyColumns = await this.getHourlyColumns(this.config.hourly_columns, temperatureUnit)
+      this.cachedHourlyColumnsCacheKey = cacheKey
+    } catch (e) {
+      console.error('Error updating cached hourly columns', e)
+      this.cachedHourlyColumns = undefined
+      this.cachedHourlyColumnsCacheKey = undefined
     }
   }
 
@@ -266,14 +311,15 @@ export class ClockWeatherCard extends LitElement {
       </clock-weather-card-today-right>`
   }
 
-  private renderForecast (): TemplateResult[] {
+  private renderForecast (): TemplateResult | TemplateResult[] {
     const weather = this.getWeather()
     const currentTemp = roundIfNotNull(this.getCurrentTemperature())
     const maxRowsCount = this.config.forecast_rows
     const hourly = this.config.hourly_forecast
     const temperatureUnit = weather.attributes.temperature_unit
 
-    const forecasts = this.mergeForecasts(maxRowsCount, hourly)
+    // Always use daily forecasts for left side display
+    const forecasts = this.mergeForecasts(maxRowsCount, false)
 
     const minTemps = forecasts.map((f) => f.templow)
     const maxTemps = forecasts.map((f) => f.temperature)
@@ -286,18 +332,35 @@ export class ClockWeatherCard extends LitElement {
 
     const displayTexts = forecasts
       .map(f => f.datetime)
-      .map(d => hourly ? this.time(d) : this.localize(`day.${d.weekday}`))
+      .map(d => this.localize(`day.${d.weekday}`))
     const maxColOneChars = displayTexts.length ? max(displayTexts.map(t => t.length)) : 0
 
-    return forecasts.map((forecast, i) => safeRender(() => this.renderForecastItem(forecast, minTemp, maxTemp, currentTemp, temperatureUnit, hourly, displayTexts[i], maxColOneChars)))
+    const forecastRows = forecasts.map((forecast, i) => safeRender(() => this.renderForecastItem(forecast, minTemp, maxTemp, currentTemp, displayTexts[i], maxColOneChars, temperatureUnit)))
+
+    if (hourly) {
+      const hourlyRows = forecasts.map((forecast, i) => safeRender(() => this.renderHourlyForecastLeftItem(forecast, displayTexts[i], maxColOneChars)))
+      const columns = this.cachedHourlyColumns ?? []
+      return html`
+        <clock-weather-card-hourly-layout>
+          <clock-weather-card-hourly-left>
+            ${hourlyRows}
+          </clock-weather-card-hourly-left>
+          <clock-weather-card-hourly-columns style="--row-count: ${forecasts.length};">
+            ${columns.map((column) => this.renderHourlyColumn(column))}
+          </clock-weather-card-hourly-columns>
+        </clock-weather-card-hourly-layout>
+      `
+    }
+
+    return forecastRows
   }
 
-  private renderForecastItem (forecast: MergedWeatherForecast, minTemp: number, maxTemp: number, currentTemp: number | null, temperatureUnit: TemperatureUnit, hourly: boolean, displayText: string, maxColOneChars: number): TemplateResult {
+  private renderForecastItem (forecast: MergedWeatherForecast, minTemp: number, maxTemp: number, currentTemp: number | null, displayText: string, maxColOneChars: number, temperatureUnit: TemperatureUnit): TemplateResult {
     const weatherState = forecast.condition === 'pouring' ? 'raindrops' : forecast.condition === 'rainy' ? 'raindrop' : forecast.condition
     const forecastIconType = this.config.weather_icon_type === 'monochrome' ? 'monochrome' : 'fill'
     const weatherIcon = this.toIcon(weatherState, forecastIconType, true, 'static')
     const tempUnit = this.getWeather().attributes.temperature_unit
-    const isNow = hourly ? DateTime.now().hour === forecast.datetime.hour : DateTime.now().day === forecast.datetime.day
+    const isNow = DateTime.now().day === forecast.datetime.day
     const minTempDay = Math.round(isNow && currentTemp !== null ? Math.min(currentTemp, forecast.templow) : forecast.templow)
     const maxTempDay = Math.round(isNow && currentTemp !== null ? Math.max(currentTemp, forecast.temperature) : forecast.temperature)
 
@@ -309,6 +372,47 @@ export class ClockWeatherCard extends LitElement {
         ${this.renderForecastTemperatureBar(minTemp, maxTemp, minTempDay, maxTempDay, isNow, currentTemp, temperatureUnit)}
         ${this.renderText(this.toConfiguredTempWithUnit(tempUnit, maxTempDay))}
       </clock-weather-card-forecast-row>
+    `
+  }
+
+  private renderHourlyForecastLeftItem (forecast: MergedWeatherForecast, displayText: string, maxColOneChars: number): TemplateResult {
+    const weatherState = forecast.condition === 'pouring' ? 'raindrops' : forecast.condition === 'rainy' ? 'raindrop' : forecast.condition
+    const forecastIconType = this.config.weather_icon_type === 'monochrome' ? 'monochrome' : 'fill'
+    const weatherIcon = this.toIcon(weatherState, forecastIconType, true, 'static')
+    const tempUnit = this.getWeather().attributes.temperature_unit
+    const minTempDay = Math.round(forecast.templow)
+    const maxTempDay = Math.round(forecast.temperature)
+    const lowText = this.toConfiguredTempWithUnit(tempUnit, minTempDay)
+    const highText = this.toConfiguredTempWithUnit(tempUnit, maxTempDay)
+
+    return html`
+      <clock-weather-card-hourly-left-row style="--col-one-size: ${(maxColOneChars * 0.5)}rem;">
+        ${this.renderText(displayText)}
+        ${this.renderIcon(weatherIcon)}
+        ${this.renderText(`${lowText} / ${highText}`, 'right')}
+      </clock-weather-card-hourly-left-row>
+    `
+  }
+
+  private renderHourlyColumn (column: {
+    timeText: string
+    tempText: string
+    tempColor: string
+    barHeightPercent: number
+    color: string
+    isCurrent: boolean
+  }): TemplateResult {
+    return html`
+      <hourly-forecast-column>
+        <hourly-forecast-column-plot>
+          <hourly-forecast-column-bar style="--hourly-bar-height: ${column.barHeightPercent}%; --bar-color: ${column.color}; --bar-opacity: ${column.isCurrent ? 0.85 : 1};">
+            <hourly-forecast-column-temp-top style="--hourly-temp-color: ${column.tempColor};">
+              ${column.tempText}
+            </hourly-forecast-column-temp-top>
+          </hourly-forecast-column-bar>
+        </hourly-forecast-column-plot>
+        <hourly-forecast-column-time>${column.timeText}</hourly-forecast-column-time>
+      </hourly-forecast-column>
     `
   }
 
@@ -473,6 +577,7 @@ export class ClockWeatherCard extends LitElement {
       humidity_sensor: config.humidity_sensor,
       weather_icon_type: config.weather_icon_type ?? 'line',
       forecast_rows: config.forecast_rows ?? 5,
+      hourly_columns: config.hourly_columns ?? 12,
       hourly_forecast: config.hourly_forecast ?? false,
       animated_icon: config.animated_icon ?? true,
       time_format: config.time_format?.toString() as '12' | '24' | undefined,
@@ -528,18 +633,31 @@ export class ClockWeatherCard extends LitElement {
     return this.getWeather().attributes.temperature ?? null
   }
 
-  private updateTemperatureTrend (): void {
-    this.temperatureTrend = this.resolveTemperatureTrend()
+  private async updateTemperatureTrend (): Promise<void> {
+    this.temperatureTrend = await this.resolveTemperatureTrend()
   }
 
-  private resolveTemperatureTrend (): TemperatureTrend {
-    const surroundingForecasts = this.getSurroundingHourlyForecasts(2, 2)
-    if (surroundingForecasts.length < 2) {
-      return 'stable'
+  private async resolveTemperatureTrend (): Promise<TemperatureTrend> {
+    const now = this.toZonedDate(this.currentDate).startOf('hour')
+    const weatherTemperatureUnit = this.getWeather().attributes.temperature_unit
+    const hourKey = (date: DateTime): string => this.toZonedDate(date).startOf('hour').toFormat('yyyy-LL-dd-HH')
+
+    const temperatureByHour = new Map<string, number>()
+
+    const historicalTemps = await this.getHistoricalTemperatures(2, weatherTemperatureUnit)
+    for (const [key, temp] of historicalTemps) {
+      temperatureByHour.set(key, temp)
     }
 
-    const temperatures = surroundingForecasts
-      .map((forecast) => forecast.temperature)
+    const surroundingForecasts = this.getSurroundingHourlyForecasts(0, 2)
+    for (const forecast of surroundingForecasts) {
+      if (forecast.temperature === null) continue
+      const key = hourKey(this.parseDateTime(forecast.datetime))
+      temperatureByHour.set(key, forecast.temperature)
+    }
+
+    const temperatures = [-2, -1, 0, 1, 2]
+      .map((offset) => temperatureByHour.get(hourKey(now.plus({ hours: offset })) ?? '') ?? null)
       .filter((temperature): temperature is number => temperature !== null)
 
     if (temperatures.length < 2) {
@@ -587,11 +705,250 @@ export class ClockWeatherCard extends LitElement {
       .filter((forecast) => forecast.temperature !== null)
       .map((forecast) => ({
         forecast,
-        datetime: this.parseDateTime(forecast.datetime)
+        datetime: this.parseDateTime(forecast.datetime).setZone(now.zoneName ?? undefined)
       }))
       .filter(({ datetime }) => datetime.toMillis() >= windowStart.toMillis() && datetime.toMillis() <= windowEnd.toMillis())
       .sort((left, right) => left.datetime.toMillis() - right.datetime.toMillis())
       .map(({ forecast }) => forecast)
+  }
+
+  private convertTemperatureBetweenUnits (temperature: number, fromUnit: TemperatureUnit, toUnit: TemperatureUnit): number {
+    if (fromUnit === toUnit) {
+      return temperature
+    }
+
+    return toUnit === '°C'
+      ? this.toCelsius(fromUnit, temperature)
+      : this.toFahrenheit(fromUnit, temperature)
+  }
+
+  private getHistoricalTemperatureSources (): string[] {
+    const weatherEntityId = this.config.entity
+    if (this.config.temperature_sensor) {
+      return [this.config.temperature_sensor]
+    }
+
+    return [weatherEntityId]
+  }
+
+  private async getHistoricalTemperatures (previousHours: number, targetUnit: TemperatureUnit): Promise<Map<string, number>> {
+    try {
+      const now = this.toZonedDate(this.currentDate).startOf('hour')
+      const startTime = now.minus({ hours: previousHours })
+      const endTime = now
+      const temperatureByHour = new Map<string, number>()
+      const hourKey = (dateIso: string): string => this.toZonedDate(this.parseDateTime(dateIso)).startOf('hour').toFormat('yyyy-LL-dd-HH')
+      const historyStart = startTime.minus({ hours: 12 })
+
+      // Prefer recorder statistics for modern measurement sensors.
+      if (this.config.temperature_sensor) {
+        const statisticsByHour = await this.getHistoricalTemperaturesFromStatistics(this.config.temperature_sensor, startTime, endTime, targetUnit)
+        if (statisticsByHour.size > 0) {
+          return statisticsByHour
+        }
+      }
+
+      const sourceEntities = this.getHistoricalTemperatureSources()
+      for (const sourceEntity of sourceEntities) {
+        const historyResponse = await this.hass.callWS<Array<Array<{
+          state: string
+          last_changed: string
+          last_updated?: string
+          attributes?: {
+            temperature?: number
+            unit_of_measurement?: string
+            temperature_unit?: string
+          }
+        }>>>({
+          type: 'history/history_during_period',
+          start_time: historyStart.toISO(),
+          end_time: endTime.toISO(),
+          entity_ids: [sourceEntity],
+          no_attributes: false,
+          minimal_response: false
+        }).catch(async () => {
+          // Compatibility fallback for older/newer HA variants that expect filter_entity_id.
+          return await this.hass.callWS<Array<Array<{
+            state: string
+            last_changed: string
+            last_updated?: string
+            attributes?: {
+              temperature?: number
+              unit_of_measurement?: string
+              temperature_unit?: string
+            }
+          }>>>({
+            type: 'history/history_during_period',
+            start_time: historyStart.toISO(),
+            end_time: endTime.toISO(),
+            filter_entity_id: sourceEntity,
+            no_attributes: false,
+            minimal_response: false
+          }).catch(async () => {
+            return await this.hass.callWS<Array<Array<{
+              state: string
+              last_changed: string
+              last_updated?: string
+              attributes?: {
+                temperature?: number
+                unit_of_measurement?: string
+                temperature_unit?: string
+              }
+            }>>>({
+              type: 'history/history_during_period',
+              start_time: historyStart.toISO(),
+              end_time: endTime.toISO(),
+              entity_id: sourceEntity,
+              no_attributes: false,
+              minimal_response: false
+            }).catch(() => null)
+          })
+        })
+
+        const historyEntries = this.extractHistoryEntries(historyResponse, sourceEntity)
+        const points: Array<{ timestamp: number, temperature: number }> = []
+        for (const entry of historyEntries) {
+          if (entry.state === 'unknown' || entry.state === 'unavailable') {
+            continue
+          }
+
+          const fromState = parseFloat(entry.state)
+          const rawTemp = !isNaN(fromState)
+            ? fromState
+            : entry.attributes?.temperature
+
+          if (rawTemp !== undefined && rawTemp !== null) {
+            const sourceUnit = entry.attributes?.unit_of_measurement === '°F' || entry.attributes?.temperature_unit === '°F'
+              ? '°F'
+              : entry.attributes?.unit_of_measurement === '°C' || entry.attributes?.temperature_unit === '°C'
+                ? '°C'
+                : targetUnit
+            const normalizedTemp = this.convertTemperatureBetweenUnits(rawTemp, sourceUnit, targetUnit)
+            const timestampIso = entry.last_updated ?? entry.last_changed
+            const timestamp = this.parseDateTime(timestampIso).toMillis()
+            if (!isNaN(timestamp)) {
+              points.push({ timestamp, temperature: normalizedTemp })
+            }
+          }
+        }
+
+        points.sort((a, b) => a.timestamp - b.timestamp)
+        let pointIndex = 0
+        let latestTemp: number | null = null
+        for (let bucket = startTime; bucket.toMillis() <= endTime.toMillis(); bucket = bucket.plus({ hours: 1 })) {
+          const bucketEnd = bucket.endOf('hour').toMillis()
+          while (pointIndex < points.length && points[pointIndex].timestamp <= bucketEnd) {
+            latestTemp = points[pointIndex].temperature
+            pointIndex += 1
+          }
+
+          if (latestTemp !== null) {
+            const key = hourKey(bucket.toISO() ?? '')
+            if (!temperatureByHour.has(key)) {
+              temperatureByHour.set(key, latestTemp)
+            }
+          }
+        }
+      }
+
+      return temperatureByHour
+    } catch (e: unknown) {
+      console.warn('clock-weather-card - Error fetching historical temperatures', e)
+      return new Map()
+    }
+  }
+
+  private async getHistoricalTemperaturesFromStatistics (
+    statisticId: string,
+    startTime: DateTime,
+    endTime: DateTime,
+    targetUnit: TemperatureUnit
+  ): Promise<Map<string, number>> {
+    interface StatisticsEntry {
+      start: string
+      mean?: number | null
+      state?: number | string | null
+      max?: number | null
+      min?: number | null
+    }
+
+    try {
+      const statisticsResponse = await this.hass.callWS<Record<string, StatisticsEntry[]>>({
+        type: 'recorder/statistics_during_period',
+        start_time: startTime.toISO(),
+        end_time: endTime.plus({ hours: 1 }).toISO(),
+        statistic_ids: [statisticId],
+        period: 'hour'
+      }).catch(() => null)
+
+      const entries = statisticsResponse?.[statisticId] ?? []
+      if (!entries.length) {
+        return new Map()
+      }
+
+      const sourceState = this.hass.states[statisticId] as TemperatureSensor | undefined
+      const sourceUnit = sourceState?.attributes.unit_of_measurement === '°F' ? '°F' : sourceState?.attributes.unit_of_measurement === '°C' ? '°C' : targetUnit
+      const points: Array<{ timestamp: number, temperature: number }> = []
+
+      for (const entry of entries) {
+        const candidateValues = [
+          entry.mean,
+          typeof entry.state === 'number' ? entry.state : (entry.state ? parseFloat(entry.state) : null),
+          entry.max,
+          entry.min
+        ]
+        const raw = candidateValues.find((value): value is number => value !== null && value !== undefined && !isNaN(value))
+        if (raw === undefined) {
+          continue
+        }
+
+        const timestamp = this.parseDateTime(entry.start).toMillis()
+        if (!isNaN(timestamp)) {
+          points.push({
+            timestamp,
+            temperature: this.convertTemperatureBetweenUnits(raw, sourceUnit, targetUnit)
+          })
+        }
+      }
+
+      points.sort((a, b) => a.timestamp - b.timestamp)
+      const byHour = new Map<string, number>()
+      let pointIndex = 0
+      let latestTemp: number | null = null
+      for (let bucket = startTime; bucket.toMillis() <= endTime.toMillis(); bucket = bucket.plus({ hours: 1 })) {
+        const bucketEnd = bucket.endOf('hour').toMillis()
+        while (pointIndex < points.length && points[pointIndex].timestamp <= bucketEnd) {
+          latestTemp = points[pointIndex].temperature
+          pointIndex += 1
+        }
+
+        if (latestTemp !== null) {
+          const key = this.toZonedDate(bucket).startOf('hour').toFormat('yyyy-LL-dd-HH')
+          byHour.set(key, latestTemp)
+        }
+      }
+
+      return byHour
+    } catch (e: unknown) {
+      console.warn('clock-weather-card - Error fetching historical temperatures from statistics', e)
+      return new Map()
+    }
+  }
+
+  private extractHistoryEntries (
+    historyResponse: Array<Array<{ state: string, last_changed: string, last_updated?: string, attributes?: { temperature?: number, unit_of_measurement?: string, temperature_unit?: string } }>> | Record<string, Array<{ state: string, last_changed: string, last_updated?: string, attributes?: { temperature?: number, unit_of_measurement?: string, temperature_unit?: string } }>> | null,
+    sourceEntity: string
+  ): Array<{ state: string, last_changed: string, last_updated?: string, attributes?: { temperature?: number, unit_of_measurement?: string, temperature_unit?: string } }> {
+    if (!historyResponse) {
+      return []
+    }
+
+    if (Array.isArray(historyResponse)) {
+      const first = historyResponse[0]
+      return Array.isArray(first) ? first : []
+    }
+
+    return historyResponse[sourceEntity] ?? []
   }
 
   private getCurrentHumidity (): number | null {
@@ -767,6 +1124,162 @@ export class ClockWeatherCard extends LitElement {
 
   private localize (key: string): string {
     return localize(key, this.getLocale())
+  }
+
+  private formatHourlyColumnHour (date: DateTime): string {
+    const use24Hour = this.config.time_format === '24' || (this.config.time_format == null && this.hass.locale.time_format === TimeFormat.twenty_four)
+    return this.toZonedDate(date).toFormat(use24Hour ? 'H' : 'h')
+  }
+
+  private async getHourlyColumns (columnsCount: number, temperatureUnit: TemperatureUnit): Promise<Array<{
+    timeText: string
+    tempText: string
+    tempColor: string
+    barHeightPercent: number
+    color: string
+    isCurrent: boolean
+  }>> {
+    const now = this.toZonedDate(this.currentDate).startOf('hour')
+    const previousHours = Math.min(4, Math.floor(columnsCount * 0.25))
+    const nextHours = Math.max(0, columnsCount - previousHours - 1)
+    const start = now.minus({ hours: previousHours })
+
+    const hourKey = (date: DateTime): string => this.toZonedDate(date).startOf('hour').toFormat('yyyy-LL-dd-HH')
+
+    // Collect hourly data in the visible window and map by local hour bucket.
+    const temperatureByHour = new Map<string, number>()
+
+    // Fetch historical temperatures for previous hours
+    const historicalTemps = await this.getHistoricalTemperatures(previousHours, temperatureUnit)
+    for (const [key, temp] of historicalTemps) {
+      temperatureByHour.set(key, temp)
+    }
+
+    // Fetch forecast data for current hour forward
+    const allHourlyData = this.getSurroundingHourlyForecasts(previousHours, nextHours)
+    for (const forecast of allHourlyData) {
+      if (forecast.temperature === null) continue
+      const parsed = this.parseDateTime(forecast.datetime)
+      temperatureByHour.set(hourKey(parsed), forecast.temperature)
+    }
+
+    // Ensure the current hour always uses the live current temperature value.
+    const currentTemperature = this.getCurrentTemperature()
+    if (currentTemperature !== null) {
+      const currentTemperatureUnit = this.config.temperature_sensor ? this.getConfiguredTemperatureUnit() : temperatureUnit
+      const currentTempInForecastUnit = this.convertTemperatureBetweenUnits(currentTemperature, currentTemperatureUnit, temperatureUnit)
+      temperatureByHour.set(hourKey(now), currentTempInForecastUnit)
+    }
+
+    const hourlyColumns = Array.from({ length: columnsCount }, (_, index) => {
+      const date = start.plus({ hours: index })
+      const key = hourKey(date)
+      const temperature = temperatureByHour.get(key) ?? null
+      return {
+        hourText: this.formatHourlyColumnHour(date),
+        temperature,
+        isCurrent: date.toMillis() === now.toMillis()
+      }
+    })
+
+    const numericTemps = hourlyColumns
+      .map((column) => column.temperature)
+      .filter((temperature): temperature is number => temperature !== null)
+      .map((temperature) => this.toConfiguredTempWithoutUnit(temperatureUnit, temperature))
+
+    const minTemp = numericTemps.length ? min(numericTemps) : 0
+    const maxTemp = numericTemps.length ? max(numericTemps) : 1
+    const actualRange = maxTemp - minTemp
+    // Require a minimum range to ensure the bars don't exaggerate small differences in temperature,
+    // and a minimum of 1 to avoid division by 0.
+    const displayRange = Math.max(15, actualRange, 1)
+    const displayMinTemp = minTemp - ((displayRange - actualRange) / 2)
+
+    return hourlyColumns.map((column) => {
+      if (column.temperature === null) {
+        return {
+          timeText: column.hourText,
+          tempText: '--',
+          tempColor: '#FFFFFF',
+          barHeightPercent: 16,
+          color: this.config.weather_icon_type === 'monochrome' ? '#000000' : 'rgba(140, 140, 140, 0.4)',
+          isCurrent: column.isCurrent
+        }
+      }
+
+      const convertedTemp = this.toConfiguredTempWithoutUnit(temperatureUnit, column.temperature)
+      const normalized = (convertedTemp - displayMinTemp) / displayRange
+      const barHeightPercent = Math.round((normalized * 70) + 25)
+      const displayedTemp = this.config.show_decimal ? Math.round(convertedTemp * 10) / 10 : Math.round(convertedTemp)
+      const displayTempText = `${this.config.show_decimal ? displayedTemp.toFixed(1).replace(/\.0$/, '') : displayedTemp.toString()}°`
+      const barColor = this.getHourlyColumnColor(column.temperature, temperatureUnit, column.isCurrent)
+
+      return {
+        timeText: column.hourText,
+        tempText: displayTempText,
+        tempColor: this.getHourlyColumnTemperatureTextColor(barColor),
+        barHeightPercent,
+        color: barColor,
+        isCurrent: column.isCurrent
+      }
+    })
+  }
+
+  private getHourlyColumnTemperatureTextColor (barColor: string): string {
+    if (this.config.weather_icon_type === 'monochrome') {
+      return '#FFFFFF'
+    }
+
+    const rgbMatch = barColor.match(/rgb\(\s*([0-9]+),\s*([0-9]+),\s*([0-9]+)\s*\)/i)
+    if (!rgbMatch) {
+      return '#FFFFFF'
+    }
+
+    const red = parseInt(rgbMatch[1], 10)
+    const green = parseInt(rgbMatch[2], 10)
+    const blue = parseInt(rgbMatch[3], 10)
+    const brightness = ((red * 299) + (green * 587) + (blue * 114)) / 1000
+
+    return brightness > 150 ? '#0B1523' : '#FFFFFF'
+  }
+
+  private getHourlyColumnColor (temperature: number, unit: TemperatureUnit, isCurrent: boolean): string {
+    if (this.config.weather_icon_type === 'monochrome') {
+      return isCurrent ? 'rgba(0, 0, 0, 0.5)' : '#000000'
+    }
+
+    const tempCelsius = this.toCelsius(unit, temperature)
+    const colors = [...gradientMap.entries()].sort(([left], [right]) => left - right)
+    if (tempCelsius <= colors[0][0]) {
+      return this.darkenRgb(colors[0][1], isCurrent ? 0.72 : 1)
+    }
+    if (tempCelsius >= colors[colors.length - 1][0]) {
+      return this.darkenRgb(colors[colors.length - 1][1], isCurrent ? 0.72 : 1)
+    }
+
+    for (let i = 1; i < colors.length; i++) {
+      const [rightTemp, rightColor] = colors[i]
+      const [leftTemp, leftColor] = colors[i - 1]
+      if (tempCelsius <= rightTemp) {
+        const ratio = (tempCelsius - leftTemp) / (rightTemp - leftTemp)
+        const color = new Rgb(
+          Math.round(leftColor.r + ratio * (rightColor.r - leftColor.r)),
+          Math.round(leftColor.g + ratio * (rightColor.g - leftColor.g)),
+          Math.round(leftColor.b + ratio * (rightColor.b - leftColor.b))
+        )
+        return this.darkenRgb(color, isCurrent ? 0.72 : 1)
+      }
+    }
+
+    return this.darkenRgb(colors[colors.length - 1][1], isCurrent ? 0.72 : 1)
+  }
+
+  private darkenRgb (color: Rgb, factor: number): string {
+    return new Rgb(
+      Math.max(0, Math.round(color.r * factor)),
+      Math.max(0, Math.round(color.g * factor)),
+      Math.max(0, Math.round(color.b * factor))
+    ).toRgbString()
   }
 
   private mergeForecasts (maxRowsCount: number, hourly: boolean): MergedWeatherForecast[] {
@@ -962,7 +1475,7 @@ export class ClockWeatherCard extends LitElement {
     const supportsHourly = this.supportsFeature(WeatherEntityFeature.FORECAST_HOURLY)
     const hourly = this.config.hourly_forecast
     if (supportsDaily && supportsHourly) {
-      return hourly ? 'hourly' : 'daily'
+      return 'daily'
     } else if (hourly && supportsHourly) {
       return 'hourly'
     } else if (!hourly && supportsDaily) {
