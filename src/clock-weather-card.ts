@@ -533,12 +533,12 @@ export class ClockWeatherCard extends LitElement {
   }
 
   private resolveTemperatureTrend (): TemperatureTrend {
-    const upcomingForecasts = this.getUpcomingHourlyForecasts(3)
-    if (upcomingForecasts.length < 2) {
+    const surroundingForecasts = this.getSurroundingHourlyForecasts(2, 2)
+    if (surroundingForecasts.length < 2) {
       return 'stable'
     }
 
-    const temperatures = upcomingForecasts
+    const temperatures = surroundingForecasts
       .map((forecast) => forecast.temperature)
       .filter((temperature): temperature is number => temperature !== null)
 
@@ -578,17 +578,19 @@ export class ClockWeatherCard extends LitElement {
     return 'stable'
   }
 
-  private getUpcomingHourlyForecasts (count: number): WeatherForecast[] {
+  private getSurroundingHourlyForecasts (previousHours: number, nextHours: number): WeatherForecast[] {
     const now = this.toZonedDate(this.currentDate)
+    const windowStart = now.minus({ hours: previousHours })
+    const windowEnd = now.plus({ hours: nextHours })
+
     return (this.hourlyForecasts ?? [])
       .filter((forecast) => forecast.temperature !== null)
       .map((forecast) => ({
         forecast,
         datetime: this.parseDateTime(forecast.datetime)
       }))
-      .filter(({ datetime }) => datetime.toMillis() >= now.toMillis())
+      .filter(({ datetime }) => datetime.toMillis() >= windowStart.toMillis() && datetime.toMillis() <= windowEnd.toMillis())
       .sort((left, right) => left.datetime.toMillis() - right.datetime.toMillis())
-      .slice(0, count)
       .map(({ forecast }) => forecast)
   }
 
