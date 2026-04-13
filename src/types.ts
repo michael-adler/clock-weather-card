@@ -92,6 +92,7 @@ export type TemperatureUnit = '°C' | '°F'
 export interface WeatherForecast {
   datetime: string
   condition: string
+  is_daytime?: boolean | null
   temperature: number | null
   humidity?: number | null
   precipitation: number | null

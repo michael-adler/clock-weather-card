@@ -68,6 +68,7 @@ export class ClockWeatherCard extends LitElement {
   @state() private config!: MergedClockWeatherCardConfig
   @state() private currentDate!: DateTime
   @state() private forecasts?: WeatherForecast[]
+  @state() private twiceDailyForecasts?: WeatherForecast[]
   @state() private hourlyForecasts?: WeatherForecast[]
   @state() private error?: TemplateResult
   @state() private temperatureTrend: TemperatureTrend = 'stable'
@@ -83,6 +84,8 @@ export class ClockWeatherCard extends LitElement {
   private cachedHourlyColumnsCacheKey?: string
   private forecastSubscriber?: () => Promise<void>
   private forecastSubscriberLock = false
+  private twiceDailyForecastSubscriber?: () => Promise<void>
+  private twiceDailyForecastSubscriberLock = false
   private hourlyForecastSubscriber?: () => Promise<void>
   private hourlyForecastSubscriberLock = false
 
@@ -142,7 +145,7 @@ export class ClockWeatherCard extends LitElement {
       return false
     }
 
-    if (changedProps.has('forecasts') || changedProps.has('hourlyForecasts') || changedProps.has('temperatureTrend')) {
+    if (changedProps.has('forecasts') || changedProps.has('twiceDailyForecasts') || changedProps.has('hourlyForecasts') || changedProps.has('temperatureTrend')) {
       return true
     }
 
@@ -162,6 +165,7 @@ export class ClockWeatherCard extends LitElement {
     super.updated(changedProps)
     if (changedProps.has('config')) {
       void this.subscribeForecastEvents()
+      void this.subscribeTwiceDailyForecastEvents()
       void this.subscribeHourlyForecastEvents()
     }
   }
@@ -212,6 +216,7 @@ export class ClockWeatherCard extends LitElement {
     super.connectedCallback()
     if (this.hasUpdated) {
       void this.subscribeForecastEvents()
+      void this.subscribeTwiceDailyForecastEvents()
       void this.subscribeHourlyForecastEvents()
     }
   }
@@ -219,6 +224,7 @@ export class ClockWeatherCard extends LitElement {
   public disconnectedCallback (): void {
     super.disconnectedCallback()
     void this.unsubscribeForecastEvents()
+    void this.unsubscribeTwiceDailyForecastEvents()
     void this.unsubscribeHourlyForecastEvents()
   }
 
@@ -226,6 +232,10 @@ export class ClockWeatherCard extends LitElement {
     super.willUpdate(changedProps)
     if (!this.forecastSubscriber) {
       void this.subscribeForecastEvents()
+    }
+
+    if (!this.twiceDailyForecastSubscriber) {
+      void this.subscribeTwiceDailyForecastEvents()
     }
 
     if (!this.hourlyForecastSubscriber) {
@@ -319,7 +329,7 @@ export class ClockWeatherCard extends LitElement {
     const temperatureUnit = weather.attributes.temperature_unit
 
     // Always use daily forecasts for left side display
-    const forecasts = this.mergeForecasts(maxRowsCount, false)
+    const forecasts = this.getDailySummaryForecasts(maxRowsCount)
 
     const minTemps = forecasts.map((f) => f.templow)
     const maxTemps = forecasts.map((f) => f.temperature)
@@ -1303,6 +1313,65 @@ export class ClockWeatherCard extends LitElement {
       .slice(0, maxRowsCount)
   }
 
+  private getDailySummaryForecasts (maxRowsCount: number): MergedWeatherForecast[] {
+    const dailyForecasts = this.mergeForecasts(maxRowsCount, false)
+
+    if (!this.supportsFeature(WeatherEntityFeature.FORECAST_TWICE_DAILY) || !this.twiceDailyForecasts?.length) {
+      return dailyForecasts
+    }
+
+    interface TimedForecast {
+      forecast: WeatherForecast
+      datetime: DateTime
+    }
+
+    const sortedTwiceDailyForecasts = this.twiceDailyForecasts
+      .map((forecast) => ({
+        forecast,
+        datetime: this.parseDateTime(forecast.datetime)
+      }))
+      .sort((a, b) => a.datetime.toMillis() - b.datetime.toMillis())
+
+    const daytimeByDate = new Map<string, { daytime: TimedForecast, precedingNight?: TimedForecast }>()
+    let latestNighttime: TimedForecast | undefined
+
+    for (const timedForecast of sortedTwiceDailyForecasts) {
+      if (timedForecast.forecast.is_daytime === false) {
+        latestNighttime = timedForecast
+        continue
+      }
+
+      if (timedForecast.forecast.is_daytime !== true) {
+        continue
+      }
+
+      const dateKey = this.toZonedDate(timedForecast.datetime).toFormat('yyyy-LL-dd')
+      if (!daytimeByDate.has(dateKey)) {
+        daytimeByDate.set(dateKey, { daytime: timedForecast, precedingNight: latestNighttime })
+      }
+    }
+
+    return dailyForecasts.map((dailyForecast) => {
+      const dateKey = this.toZonedDate(dailyForecast.datetime).toFormat('yyyy-LL-dd')
+      const twiceDailyPair = daytimeByDate.get(dateKey)
+      if (!twiceDailyPair) {
+        return dailyForecast
+      }
+
+      const daytimeTemp = twiceDailyPair.daytime.forecast.temperature
+      const precedingNightTemp = twiceDailyPair.precedingNight?.forecast.temperature ?? null
+      const hasNightAndDayTemps = daytimeTemp !== null && precedingNightTemp !== null
+
+      return {
+        ...dailyForecast,
+        // Use the daytime condition for the daily summary icon when available.
+        condition: twiceDailyPair.daytime.forecast.condition ?? dailyForecast.condition,
+        temperature: hasNightAndDayTemps ? daytimeTemp : dailyForecast.temperature,
+        templow: hasNightAndDayTemps ? precedingNightTemp : dailyForecast.templow
+      }
+    })
+  }
+
   private toZonedDate (date: DateTime): DateTime {
     const localizedDate = date.setLocale(this.getLocale())
     if (this.config.use_browser_time) return localizedDate
@@ -1390,6 +1459,57 @@ export class ClockWeatherCard extends LitElement {
         // swallow error, as this means that connection was closed already
       } finally {
         this.forecastSubscriber = undefined
+      }
+    }
+  }
+
+  private async subscribeTwiceDailyForecastEvents (): Promise<void> {
+    if (this.twiceDailyForecastSubscriberLock || this.config == null || this.hass == null) {
+      return
+    }
+
+    this.twiceDailyForecastSubscriberLock = true
+    await this.unsubscribeTwiceDailyForecastEvents()
+
+    if (this.isLegacyWeather() || !this.supportsFeature(WeatherEntityFeature.FORECAST_TWICE_DAILY)) {
+      this.twiceDailyForecasts = undefined
+      this.twiceDailyForecastSubscriber = async () => {}
+      this.twiceDailyForecastSubscriberLock = false
+      return
+    }
+
+    if (!this.isConnected) {
+      this.twiceDailyForecastSubscriberLock = false
+      return
+    }
+
+    try {
+      const callback = (event: WeatherForecastEvent): void => {
+        this.twiceDailyForecasts = event.forecast
+      }
+      const options = { resubscribe: false }
+      const message = {
+        type: 'weather/subscribe_forecast',
+        forecast_type: 'twice_daily' as const,
+        entity_id: this.config.entity
+      }
+      this.twiceDailyForecastSubscriber = await this.hass.connection.subscribeMessage<WeatherForecastEvent>(callback, message, options)
+    } catch (e: unknown) {
+      console.error('clock-weather-card - Error when subscribing to twice-daily weather forecast', e)
+      this.twiceDailyForecasts = undefined
+    } finally {
+      this.twiceDailyForecastSubscriberLock = false
+    }
+  }
+
+  private async unsubscribeTwiceDailyForecastEvents (): Promise<void> {
+    if (this.twiceDailyForecastSubscriber) {
+      try {
+        await this.twiceDailyForecastSubscriber()
+      } catch (e: unknown) {
+        // swallow error, as this means that connection was closed already
+      } finally {
+        this.twiceDailyForecastSubscriber = undefined
       }
     }
   }
