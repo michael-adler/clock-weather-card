@@ -70,6 +70,7 @@ export class ClockWeatherCard extends LitElement {
   @state() private forecasts?: WeatherForecast[]
   @state() private twiceDailyForecasts?: WeatherForecast[]
   @state() private hourlyForecasts?: WeatherForecast[]
+  @state() private todayHistoricalMinTemp?: number | null
   @state() private error?: TemplateResult
   @state() private temperatureTrend: TemperatureTrend = 'stable'
   @state() private cachedHourlyColumns?: Array<{
@@ -82,6 +83,7 @@ export class ClockWeatherCard extends LitElement {
   }>
 
   private cachedHourlyColumnsCacheKey?: string
+  private readonly historicalTemperatureCache = new Map<string, Map<string, number>>()
   private forecastSubscriber?: () => Promise<void>
   private forecastSubscriberLock = false
   private twiceDailyForecastSubscriber?: () => Promise<void>
@@ -250,6 +252,10 @@ export class ClockWeatherCard extends LitElement {
       // Fetch hourly columns data when forecasts, current hour, or config changes
       void this.updateCachedHourlyColumns()
     }
+
+    if ((changedProps.has('hass') || changedProps.has('config') || changedProps.has('twiceDailyForecasts')) && this.config) {
+      void this.updateTodayHistoricalMinTemperature()
+    }
   }
 
   private async updateCachedHourlyColumns (): Promise<void> {
@@ -275,6 +281,27 @@ export class ClockWeatherCard extends LitElement {
       console.error('Error updating cached hourly columns', e)
       this.cachedHourlyColumns = undefined
       this.cachedHourlyColumnsCacheKey = undefined
+    }
+  }
+
+  private async updateTodayHistoricalMinTemperature (): Promise<void> {
+    if (!this.config || !this.hass) {
+      this.todayHistoricalMinTemp = null
+      return
+    }
+
+    // This fallback is only relevant for integrations that support twice-daily forecasts.
+    if (!this.supportsFeature(WeatherEntityFeature.FORECAST_TWICE_DAILY)) {
+      this.todayHistoricalMinTemp = null
+      return
+    }
+
+    try {
+      const temperatureUnit = this.getWeather().attributes.temperature_unit
+      this.todayHistoricalMinTemp = await this.getTodayHistoricalMinTemperature(temperatureUnit)
+    } catch (e) {
+      console.error('Error updating today historical minimum temperature', e)
+      this.todayHistoricalMinTemp = null
     }
   }
 
@@ -742,10 +769,27 @@ export class ClockWeatherCard extends LitElement {
   }
 
   private async getHistoricalTemperatures (previousHours: number, targetUnit: TemperatureUnit): Promise<Map<string, number>> {
+    const now = this.toZonedDate(this.currentDate).startOf('hour')
+    const startTime = now.minus({ hours: previousHours })
+    return await this.getHistoricalTemperaturesByHour(startTime, now, targetUnit)
+  }
+
+  private async getHistoricalTemperaturesByHour (
+    startTime: DateTime,
+    endTime: DateTime,
+    targetUnit: TemperatureUnit
+  ): Promise<Map<string, number>> {
     try {
-      const now = this.toZonedDate(this.currentDate).startOf('hour')
-      const startTime = now.minus({ hours: previousHours })
-      const endTime = now
+      const cacheStart = this.toZonedDate(startTime).startOf('hour')
+      const cacheEnd = this.toZonedDate(endTime).startOf('hour')
+      const sourceEntity = this.config.temperature_sensor ?? this.config.entity
+      const cacheKey = `${cacheStart.toFormat('yyyy-LL-dd-HH')}-${cacheEnd.toFormat('yyyy-LL-dd-HH')}-${targetUnit}-${sourceEntity}`
+
+      const cached = this.historicalTemperatureCache.get(cacheKey)
+      if (cached) {
+        return new Map(cached)
+      }
+
       const temperatureByHour = new Map<string, number>()
       const hourKey = (dateIso: string): string => this.toZonedDate(this.parseDateTime(dateIso)).startOf('hour').toFormat('yyyy-LL-dd-HH')
       const historyStart = startTime.minus({ hours: 12 })
@@ -760,60 +804,7 @@ export class ClockWeatherCard extends LitElement {
 
       const sourceEntities = this.getHistoricalTemperatureSources()
       for (const sourceEntity of sourceEntities) {
-        const historyResponse = await this.hass.callWS<Array<Array<{
-          state: string
-          last_changed: string
-          last_updated?: string
-          attributes?: {
-            temperature?: number
-            unit_of_measurement?: string
-            temperature_unit?: string
-          }
-        }>>>({
-          type: 'history/history_during_period',
-          start_time: historyStart.toISO(),
-          end_time: endTime.toISO(),
-          entity_ids: [sourceEntity],
-          no_attributes: false,
-          minimal_response: false
-        }).catch(async () => {
-          // Compatibility fallback for older/newer HA variants that expect filter_entity_id.
-          return await this.hass.callWS<Array<Array<{
-            state: string
-            last_changed: string
-            last_updated?: string
-            attributes?: {
-              temperature?: number
-              unit_of_measurement?: string
-              temperature_unit?: string
-            }
-          }>>>({
-            type: 'history/history_during_period',
-            start_time: historyStart.toISO(),
-            end_time: endTime.toISO(),
-            filter_entity_id: sourceEntity,
-            no_attributes: false,
-            minimal_response: false
-          }).catch(async () => {
-            return await this.hass.callWS<Array<Array<{
-              state: string
-              last_changed: string
-              last_updated?: string
-              attributes?: {
-                temperature?: number
-                unit_of_measurement?: string
-                temperature_unit?: string
-              }
-            }>>>({
-              type: 'history/history_during_period',
-              start_time: historyStart.toISO(),
-              end_time: endTime.toISO(),
-              entity_id: sourceEntity,
-              no_attributes: false,
-              minimal_response: false
-            }).catch(() => null)
-          })
-        })
+        const historyResponse = await this.fetchHistoryDuringPeriod(sourceEntity, historyStart, endTime)
 
         const historyEntries = this.extractHistoryEntries(historyResponse, sourceEntity)
         const points: Array<{ timestamp: number, temperature: number }> = []
@@ -861,11 +852,116 @@ export class ClockWeatherCard extends LitElement {
         }
       }
 
+      this.historicalTemperatureCache.set(cacheKey, new Map(temperatureByHour))
+      if (this.historicalTemperatureCache.size > 24) {
+        const oldestKey = this.historicalTemperatureCache.keys().next().value
+        if (oldestKey !== undefined) {
+          this.historicalTemperatureCache.delete(oldestKey)
+        }
+      }
+
       return temperatureByHour
     } catch (e: unknown) {
       console.warn('clock-weather-card - Error fetching historical temperatures', e)
       return new Map()
     }
+  }
+
+  private async getTodayHistoricalMinTemperature (targetUnit: TemperatureUnit): Promise<number | null> {
+    try {
+      const now = this.toZonedDate(this.currentDate).startOf('hour')
+      const startOfDay = now.startOf('day')
+
+      if (startOfDay.toMillis() > now.toMillis()) {
+        return null
+      }
+
+      const historyByHour = await this.getHistoricalTemperaturesByHour(startOfDay, now, targetUnit)
+      const temperatures = Array.from(historyByHour.values())
+      return temperatures.length > 0 ? min(temperatures) : null
+    } catch (e: unknown) {
+      console.warn('clock-weather-card - Error fetching today historical minimum temperature', e)
+      return null
+    }
+  }
+
+  private async fetchHistoryDuringPeriod (
+    sourceEntity: string,
+    startTime: DateTime,
+    endTime: DateTime
+  ): Promise<Array<Array<{
+      state: string
+      last_changed: string
+      last_updated?: string
+      attributes?: {
+        temperature?: number
+        unit_of_measurement?: string
+        temperature_unit?: string
+      }
+    }>> | Record<string, Array<{
+      state: string
+      last_changed: string
+      last_updated?: string
+      attributes?: {
+        temperature?: number
+        unit_of_measurement?: string
+        temperature_unit?: string
+      }
+    }>> | null> {
+    return await this.hass.callWS<Array<Array<{
+      state: string
+      last_changed: string
+      last_updated?: string
+      attributes?: {
+        temperature?: number
+        unit_of_measurement?: string
+        temperature_unit?: string
+      }
+    }>>>({
+      type: 'history/history_during_period',
+      start_time: startTime.toISO(),
+      end_time: endTime.toISO(),
+      entity_ids: [sourceEntity],
+      no_attributes: false,
+      minimal_response: false
+    }).catch(async () => {
+      // Compatibility fallback for older/newer HA variants that expect filter_entity_id.
+      return await this.hass.callWS<Array<Array<{
+        state: string
+        last_changed: string
+        last_updated?: string
+        attributes?: {
+          temperature?: number
+          unit_of_measurement?: string
+          temperature_unit?: string
+        }
+      }>>>({
+        type: 'history/history_during_period',
+        start_time: startTime.toISO(),
+        end_time: endTime.toISO(),
+        filter_entity_id: sourceEntity,
+        no_attributes: false,
+        minimal_response: false
+      }).catch(async () => {
+        return await this.hass.callWS<Array<Array<{
+          state: string
+          last_changed: string
+          last_updated?: string
+          attributes?: {
+            temperature?: number
+            unit_of_measurement?: string
+            temperature_unit?: string
+          }
+        }>>>({
+          type: 'history/history_during_period',
+          start_time: startTime.toISO(),
+          end_time: endTime.toISO(),
+          entity_id: sourceEntity,
+          no_attributes: false,
+          minimal_response: false
+        }).catch(() => null)
+      })
+    })
   }
 
   private async getHistoricalTemperaturesFromStatistics (
@@ -1315,9 +1411,26 @@ export class ClockWeatherCard extends LitElement {
 
   private getDailySummaryForecasts (maxRowsCount: number): MergedWeatherForecast[] {
     const dailyForecasts = this.mergeForecasts(maxRowsCount, false)
+    const today = this.toZonedDate(this.currentDate)
+
+    const applyTodayMinFallback = (forecast: MergedWeatherForecast): MergedWeatherForecast => {
+      if (this.todayHistoricalMinTemp === null || this.todayHistoricalMinTemp === undefined) {
+        return forecast
+      }
+
+      const isToday = this.toZonedDate(forecast.datetime).hasSame(today, 'day')
+      if (!isToday) {
+        return forecast
+      }
+
+      return {
+        ...forecast,
+        templow: this.todayHistoricalMinTemp
+      }
+    }
 
     if (!this.supportsFeature(WeatherEntityFeature.FORECAST_TWICE_DAILY) || !this.twiceDailyForecasts?.length) {
-      return dailyForecasts
+      return dailyForecasts.map(applyTodayMinFallback)
     }
 
     interface TimedForecast {
@@ -1362,12 +1475,14 @@ export class ClockWeatherCard extends LitElement {
       const precedingNightTemp = twiceDailyPair.precedingNight?.forecast.temperature ?? null
       const hasNightAndDayTemps = daytimeTemp !== null && precedingNightTemp !== null
 
+      const fallbackForecast = applyTodayMinFallback(dailyForecast)
+
       return {
-        ...dailyForecast,
+        ...fallbackForecast,
         // Use the daytime condition for the daily summary icon when available.
-        condition: twiceDailyPair.daytime.forecast.condition ?? dailyForecast.condition,
-        temperature: hasNightAndDayTemps ? daytimeTemp : dailyForecast.temperature,
-        templow: hasNightAndDayTemps ? precedingNightTemp : dailyForecast.templow
+        condition: twiceDailyPair.daytime.forecast.condition ?? fallbackForecast.condition,
+        temperature: hasNightAndDayTemps ? daytimeTemp : fallbackForecast.temperature,
+        templow: hasNightAndDayTemps ? precedingNightTemp : fallbackForecast.templow
       }
     })
   }
